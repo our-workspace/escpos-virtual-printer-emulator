@@ -1,6 +1,6 @@
 use crate::config::AppMode;
 use crate::escpos::commands::EscPosCommand;
-use crate::escpos::printer::{PrinterState, PaperWidth, ReceiptLine};
+use crate::escpos::printer::{PrinterState, PaperWidth};
 use crate::export::pdf_export;
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
@@ -25,12 +25,17 @@ pub struct EmulatorState {
     pub active_connections: u32,
     /// Total commands processed
     pub total_commands: u64,
-    #[serde(skip)]
+    #[serde(skip, default = "default_system_time")]
     pub start_time: SystemTime,
+}
+
+fn default_system_time() -> SystemTime {
+    SystemTime::now()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandEntry {
+    #[serde(skip, default = "default_system_time")]
     pub timestamp: SystemTime,
     pub command: EscPosCommand,
     pub device_ip: String,

@@ -91,9 +91,7 @@ impl ReceiptViewer {
             })
             .shadow(if self.show_paper_edges {
                 egui::epaint::Shadow {
-                    offset: egui::vec2(2.0, 2.0),
-                    blur: 4.0,
-                    spread: 0.0,
+                    extrusion: 4.0,
                     color: Color32::from_black_alpha(30),
                 }
             } else {

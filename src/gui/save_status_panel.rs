@@ -77,7 +77,7 @@ impl SaveStatusPanel {
                         ui.group(|ui| {
                             ui.horizontal(|ui| {
                                 // Status icon
-                                let (icon, color) = match &entry.status {
+                                let (icon, _color) = match &entry.status {
                                     SaveStatus::Success => ("✅", Color32::from_rgb(100, 200, 100)),
                                     SaveStatus::Failed(_) => ("❌", Color32::from_rgb(200, 100, 100)),
                                 };

@@ -20,8 +20,9 @@ tracing = "0.1"
 tracing-subscriber = "0.3"
 anyhow = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
-printpdf = "0.5"
+printpdf = { version = "0.5", features = ["embedded_images"] }
 dirs = "5.0"
+hostname = "0.4"
 
 [profile.release]
 opt-level = 3

@@ -1,4 +1,4 @@
-use crate::escpos::printer::{PaperWidth, PrinterState, ReceiptLine, TextLine};
+use crate::escpos::printer::{PaperWidth, PrinterState, ReceiptLine};
 use anyhow::Result;
 use printpdf::*;
 use std::fs::File;
@@ -96,22 +96,16 @@ pub fn save_receipt_pdf(
                 y_pos -= display_height_mm;
             }
             ReceiptLine::Separator => {
-                // Draw a thin separator line
-                let mid_y = y_pos - TEXT_LINE_HEIGHT_MM / 2.0;
-                let points = vec![
-                    (Point::new(Mm(MARGIN_MM), Mm(mid_y)), false),
-                    (Point::new(Mm(paper_width_mm - MARGIN_MM), Mm(mid_y)), false),
-                ];
-                let line = Line {
-                    points,
-                    is_closed: false,
-                    has_fill: false,
-                    has_stroke: true,
-                    is_clipping_path: false,
-                };
-                current_layer.set_outline_color(Color::Greyscale(Greyscale::new(0.7, None)));
-                current_layer.set_outline_thickness(0.3);
-                current_layer.add_line(line);
+                // Draw a dashed separator line as text (printpdf 0.5 has no add_line on layer)
+                let dash_count = ((paper_width_mm - MARGIN_MM * 2.0) / (FONT_SIZE_PT * 0.6 / 2.8346)) as usize;
+                let sep_text = "-".repeat(dash_count);
+                current_layer.use_text(
+                    &sep_text,
+                    FONT_SIZE_PT,
+                    Mm(MARGIN_MM),
+                    Mm(y_pos),
+                    &font,
+                );
                 y_pos -= TEXT_LINE_HEIGHT_MM;
             }
         }
@@ -132,7 +126,7 @@ fn calculate_height_mm(buffer: &[ReceiptLine]) -> f64 {
     for line in buffer {
         match line {
             ReceiptLine::Text(_) => height += TEXT_LINE_HEIGHT_MM,
-            ReceiptLine::Bitmap { width_px, height_px, .. } => {
+            ReceiptLine::Bitmap { height_px, .. } => {
                 height += *height_px as f64 * MM_PER_DOT;
             }
             ReceiptLine::Separator => height += TEXT_LINE_HEIGHT_MM,
