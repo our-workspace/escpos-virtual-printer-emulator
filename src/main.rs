@@ -1,3 +1,4 @@
+use escpos_emulator::config::{AppConfig, AppMode};
 use escpos_emulator::emulator::EmulatorState;
 use escpos_emulator::gui::EscPosEmulatorApp;
 use escpos_emulator::networking::server;
@@ -12,10 +13,20 @@ async fn main() -> Result<(), eframe::Error> {
         .with_max_level(Level::INFO)
         .init();
 
-    info!("🚀 Starting ESC/POS Emulator...");
+    info!("🚀 Starting ESC/POS Emulator v2.0...");
+
+    // Load saved configuration
+    let config = AppConfig::load();
+    info!("📋 Mode: {:?}", config.mode);
 
     // Create shared emulator state
-    let emulator_state = Arc::new(Mutex::new(EmulatorState::new()));
+    let mut emulator = EmulatorState::new();
+    emulator.set_mode(config.mode.clone());
+    emulator.set_pdf_save_path(config.pdf_save_path.clone());
+    emulator.set_paper_width(config.paper_width_mm);
+    emulator.max_history_size = config.max_history_size;
+
+    let emulator_state = Arc::new(Mutex::new(emulator));
 
     // Start network server in background
     let server_state = emulator_state.clone();
@@ -28,7 +39,13 @@ async fn main() -> Result<(), eframe::Error> {
     info!("✅ Emulator initialized successfully");
 
     // Launch GUI
-    let options = eframe::NativeOptions::default();
+    let options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_title("ESC/POS Virtual Printer Emulator v2.0")
+            .with_inner_size([800.0, 600.0])
+            .with_min_inner_size([600.0, 400.0]),
+        ..Default::default()
+    };
 
     eframe::run_native(
         "ESC/POS Virtual Printer Emulator",

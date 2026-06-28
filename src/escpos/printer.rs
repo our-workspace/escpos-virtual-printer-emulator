@@ -4,9 +4,9 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum PaperWidth {
-    Width50mm,  // 384 dots (48 chars normal font)
-    Width78mm,  // 576 dots (72 chars normal font)
-    Width80mm,  // 640 dots (80 chars normal font)
+    Width50mm,  // 384 dots
+    Width78mm,  // 576 dots
+    Width80mm,  // 640 dots
 }
 
 impl PaperWidth {
@@ -21,7 +21,7 @@ impl PaperWidth {
     pub fn get_max_chars(&self, font_size: u32) -> u32 {
         let dots = self.get_width_dots();
         match font_size {
-            8..=12 => dots / 8,
+            0..=12 => dots / 8,
             13..=16 => dots / 10,
             17..=24 => dots / 12,
             _ => dots / 8,
@@ -29,10 +29,23 @@ impl PaperWidth {
     }
 }
 
-/// A single line element in the receipt buffer
+/// Text line with per-line formatting snapshot
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TextLine {
+    pub content: String,
+    pub font: Font,
+    pub font_size: u32,
+    pub justification: Justification,
+    pub emphasis: bool,
+    pub underline: bool,
+    pub italic: bool,
+    pub line_height: u32,
+}
+
+/// A single element in the receipt buffer
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ReceiptLine {
-    Text(String),
+    Text(TextLine),
     /// Monochrome bitmap: width in pixels, height in pixels, 1-bit-per-pixel packed data
     Bitmap { width_px: u32, height_px: u32, data: Vec<u8> },
     Separator,
@@ -70,6 +83,32 @@ impl PrinterState {
         }
     }
 
+    /// Reset printer state to defaults (ESC @) — does NOT clear the buffer
+    pub fn reset(&mut self) {
+        self.current_font = Font::FontA;
+        self.justification = Justification::Left;
+        self.emphasis = false;
+        self.underline = false;
+        self.italic = false;
+        self.line_height = 24;
+        self.font_size = 12;
+        self.codepage = 0;
+    }
+
+    /// Create a TextLine snapshot with current formatting state
+    fn current_text_line(&self, content: String) -> TextLine {
+        TextLine {
+            content,
+            font: self.current_font.clone(),
+            font_size: self.font_size,
+            justification: self.justification.clone(),
+            emphasis: self.emphasis,
+            underline: self.underline,
+            italic: self.italic,
+            line_height: self.line_height,
+        }
+    }
+
     pub fn process_command(&mut self, command: &EscPosCommand) {
         match command {
             EscPosCommand::Text(text) => {
@@ -77,6 +116,15 @@ impl PrinterState {
             }
             EscPosCommand::NewLine => {
                 self.add_new_line();
+            }
+            EscPosCommand::LineFeed => {
+                self.add_new_line();
+            }
+            EscPosCommand::CarriageReturn => {
+                // Carriage return — ignored (LF handles newline)
+            }
+            EscPosCommand::InitializePrinter => {
+                self.reset();
             }
             EscPosCommand::SetFont(font) => {
                 self.current_font = font.clone();
@@ -93,15 +141,29 @@ impl PrinterState {
             EscPosCommand::SetItalic(enabled) => {
                 self.italic = *enabled;
             }
-            EscPosCommand::CutPaper => {
-                self.add_separator();
+            EscPosCommand::SetLineHeight(height) => {
+                self.line_height = *height;
             }
-            EscPosCommand::PrintImage(_image_data) => {
-                // ESC * bit image — store as text placeholder for now
-                self.add_text("[BIT IMAGE]");
+            EscPosCommand::SetFontSize(size) => {
+                self.font_size = *size;
+            }
+            EscPosCommand::SetCodepage(cp) => {
+                self.codepage = *cp;
+            }
+            EscPosCommand::CutPaper => {
+                self.buffer.push(ReceiptLine::Separator);
+            }
+            EscPosCommand::PrintImage(image_data) => {
+                // ESC * bit image — store as bitmap
+                if !image_data.is_empty() {
+                    self.buffer.push(ReceiptLine::Bitmap {
+                        width_px: 8,
+                        height_px: image_data.len() as u32,
+                        data: image_data.clone(),
+                    });
+                }
             }
             EscPosCommand::PrintRasterImage { width_bytes, height, data } => {
-                // GS v 0 raster image — width_bytes is bytes per row, each byte = 8 pixels
                 let width_px = *width_bytes as u32 * 8;
                 let height_px = *height as u32;
                 self.buffer.push(ReceiptLine::Bitmap {
@@ -110,44 +172,38 @@ impl PrinterState {
                     data: data.clone(),
                 });
             }
-            EscPosCommand::SetCodepage(cp) => {
-                self.codepage = *cp;
-            }
-            EscPosCommand::SetLineHeight(height) => {
-                self.line_height = *height;
-            }
-            EscPosCommand::SetFontSize(size) => {
-                self.font_size = *size;
-            }
             EscPosCommand::Unknown(_) => {}
-            _ => {}
         }
     }
 
     fn add_text(&mut self, text: &str) {
-        if let Some(ReceiptLine::Text(last_line)) = self.buffer.last_mut() {
-            let max_chars = self.paper_width.get_max_chars(self.font_size);
-            let current_length = last_line.chars().count();
+        let max_chars = self.paper_width.get_max_chars(self.font_size) as usize;
 
-            if current_length + text.chars().count() > max_chars as usize {
-                self.add_new_line();
-                if let Some(ReceiptLine::Text(new_line)) = self.buffer.last_mut() {
-                    new_line.push_str(text);
-                }
+        if let Some(ReceiptLine::Text(last_line)) = self.buffer.last_mut() {
+            let current_length = last_line.content.chars().count();
+            if current_length + text.chars().count() > max_chars {
+                let text_line = self.current_text_line(text.to_string());
+                self.buffer.push(ReceiptLine::Text(text_line));
             } else {
-                last_line.push_str(text);
+                last_line.content.push_str(text);
+                // Update formatting to current state snapshot
+                last_line.font = self.current_font.clone();
+                last_line.font_size = self.font_size;
+                last_line.justification = self.justification.clone();
+                last_line.emphasis = self.emphasis;
+                last_line.underline = self.underline;
+                last_line.italic = self.italic;
+                last_line.line_height = self.line_height;
             }
         } else {
-            self.buffer.push(ReceiptLine::Text(text.to_string()));
+            let text_line = self.current_text_line(text.to_string());
+            self.buffer.push(ReceiptLine::Text(text_line));
         }
     }
 
     fn add_new_line(&mut self) {
-        self.buffer.push(ReceiptLine::Text(String::new()));
-    }
-
-    fn add_separator(&mut self) {
-        self.buffer.push(ReceiptLine::Separator);
+        let text_line = self.current_text_line(String::new());
+        self.buffer.push(ReceiptLine::Text(text_line));
     }
 
     pub fn clear_buffer(&mut self) {
@@ -158,55 +214,39 @@ impl PrinterState {
         &self.buffer
     }
 
+    /// Take ownership of the buffer, leaving it empty
+    pub fn take_buffer(&mut self) -> Vec<ReceiptLine> {
+        std::mem::take(&mut self.buffer)
+    }
+
     pub fn get_paper_width_dots(&self) -> u32 {
         self.paper_width.get_width_dots()
     }
 
-    pub fn get_printing_width_dots(&self) -> u32 {
-        let dots = self.paper_width.get_width_dots();
-        dots.saturating_sub(30)
-    }
-
     /// Convert a monochrome 1bpp bitmap to an RGB image for display
     pub fn bitmap_to_rgb(width_px: u32, height_px: u32, data: &[u8]) -> RgbImage {
-        let mut image = ImageBuffer::new(width_px, height_px);
-        // Fill white
-        for pixel in image.pixels_mut() {
+        let mut img = ImageBuffer::new(width_px, height_px);
+        for pixel in img.pixels_mut() {
             *pixel = Rgb([255, 255, 255]);
         }
-
         let bytes_per_row = (width_px + 7) / 8;
         for y in 0..height_px {
             for x in 0..width_px {
                 let byte_idx = (y * bytes_per_row + x / 8) as usize;
                 let bit_idx = 7 - (x % 8);
-                if byte_idx < data.len() {
-                    if (data[byte_idx] >> bit_idx) & 1 == 1 {
-                        image.put_pixel(x, y, Rgb([0, 0, 0])); // Black pixel
-                    }
+                if byte_idx < data.len() && (data[byte_idx] >> bit_idx) & 1 == 1 {
+                    img.put_pixel(x, y, Rgb([0, 0, 0]));
                 }
             }
         }
-        image
-    }
-
-    pub fn render_receipt(&self) -> RgbImage {
-        let width = self.get_paper_width_dots();
-        let height = self.calculate_total_height();
-
-        let mut image = ImageBuffer::new(width, height);
-        for pixel in image.pixels_mut() {
-            *pixel = Rgb([255, 255, 255]);
-        }
-
-        image
+        img
     }
 
     pub fn calculate_total_height(&self) -> u32 {
         let mut h = 0u32;
         for line in &self.buffer {
             match line {
-                ReceiptLine::Text(_) => h += self.line_height,
+                ReceiptLine::Text(tl) => h += tl.line_height,
                 ReceiptLine::Bitmap { height_px, .. } => h += height_px,
                 ReceiptLine::Separator => h += self.line_height,
             }
