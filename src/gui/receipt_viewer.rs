@@ -110,7 +110,7 @@ impl ReceiptViewer {
             ui.separator();
 
             // Render each line with its own formatting
-            for (line_num, line) in buffer.iter().enumerate() {
+            for (_line_num, line) in buffer.iter().enumerate() {
                 match line {
                     ReceiptLine::Text(text_line) => {
                         if !text_line.content.is_empty() {

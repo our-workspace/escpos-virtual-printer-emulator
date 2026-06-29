@@ -74,7 +74,7 @@ pub fn save_receipt_pdf(
             ReceiptLine::Bitmap { width_px, height_px, data } => {
                 // Convert 1bpp bitmap to RGB for PDF embedding
                 let rgb_image = PrinterState::bitmap_to_rgb(*width_px, *height_px, data);
-                let dynamic_img = image::DynamicImage::ImageRgb8(rgb_image);
+                let dynamic_img: image::DynamicImage = rgb_image.into();
 
                 // Calculate display dimensions
                 let raw_width_mm = *width_px as f64 * MM_PER_DOT;
