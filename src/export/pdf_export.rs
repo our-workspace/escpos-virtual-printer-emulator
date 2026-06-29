@@ -1,6 +1,8 @@
 use crate::escpos::printer::{PaperWidth, PrinterState, ReceiptLine};
 use anyhow::Result;
-use printpdf::*;
+use printpdf::{
+    BuiltinFont, Image, ImageTransform, Mm, PdfDocument,
+};
 use std::fs::File;
 use std::io::BufWriter;
 use std::path::Path;
@@ -74,6 +76,7 @@ pub fn save_receipt_pdf(
             ReceiptLine::Bitmap { width_px, height_px, data } => {
                 // Convert 1bpp bitmap to RGB for PDF embedding
                 let rgb_image = PrinterState::bitmap_to_rgb(*width_px, *height_px, data);
+                // Use the image crate directly (not shadowed by printpdf)
                 let dynamic_img: image::DynamicImage = rgb_image.into();
 
                 // Calculate display dimensions
@@ -96,7 +99,7 @@ pub fn save_receipt_pdf(
                 y_pos -= display_height_mm;
             }
             ReceiptLine::Separator => {
-                // Draw a dashed separator line as text (printpdf 0.5 has no add_line on layer)
+                // Draw a dashed separator line as text
                 let dash_count = ((paper_width_mm - MARGIN_MM * 2.0) / (FONT_SIZE_PT * 0.6 / 2.8346)) as usize;
                 let sep_text = "-".repeat(dash_count);
                 current_layer.use_text(
