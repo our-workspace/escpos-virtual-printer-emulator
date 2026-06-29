@@ -128,8 +128,17 @@ impl ReceiptViewer {
                             };
 
                             ui.with_layout(layout, |ui| {
+                                // Detect if text has Arabic/non-ASCII chars
+                                // Arabic chars break with monospace font (ligatures don't join)
+                                let has_arabic = text_line.content.chars().any(|c| c > '\u{007F}');
+
                                 // Build rich text with formatting
-                                let mut rt = RichText::new(&text_line.content).monospace();
+                                let mut rt = RichText::new(&text_line.content);
+
+                                // Only use monospace for pure ASCII text (tables, columns)
+                                if !has_arabic {
+                                    rt = rt.monospace();
+                                }
 
                                 if text_line.emphasis {
                                     rt = rt.strong();

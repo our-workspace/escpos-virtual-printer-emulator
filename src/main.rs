@@ -1,3 +1,5 @@
+#![windows_subsystem = "windows"]
+
 use escpos_emulator::config::{AppConfig, AppMode};
 use escpos_emulator::emulator::EmulatorState;
 use escpos_emulator::gui::EscPosEmulatorApp;
