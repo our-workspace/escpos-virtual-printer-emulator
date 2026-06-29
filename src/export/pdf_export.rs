@@ -1,7 +1,7 @@
 use crate::escpos::printer::{PaperWidth, PrinterState, ReceiptLine};
 use anyhow::Result;
 use printpdf::{
-    BuiltinFont, Image, ImageTransform, IndirectFontRef, Mm, PdfDocument,
+    BuiltinFont, Image, ImageTransform, IndirectFontRef, Mm, PdfDocument, PdfDocumentReference,
 };
 use std::fs::File;
 use std::io::BufWriter;
@@ -18,31 +18,48 @@ fn has_non_ascii(text: &str) -> bool {
     text.chars().any(|c| c > '\u{007F}')
 }
 
-/// Try to load a system font that supports Arabic
-fn load_arabic_font(doc: &PdfDocument) -> Option<IndirectFontRef> {
-    // Try common Windows fonts that support Arabic
-    let font_paths = [
-        r"C:\Windows\Fonts\arial.ttf",
-        r"C:\Windows\Fonts\tahoma.ttf",
-        r"C:\Windows\Fonts\segoeui.ttf",
-        r"C:\Windows\Fonts\calibri.ttf",
+/// Try to load an Arabic font — first from bundled assets, then system fonts
+fn load_arabic_font(doc: &PdfDocumentReference) -> Option<IndirectFontRef> {
+    // 1. Try bundled font next to executable
+    let exe_dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
+    let bundled_paths = [
+        exe_dir.join("assets").join("fonts").join("Cairo-Regular.ttf"),
+        exe_dir.join("assets").join("fonts").join("NotoKufiArabic-Bold.ttf"),
+        exe_dir.join("Cairo-Regular.ttf"),
     ];
 
-    for path in &font_paths {
-        let font_path = Path::new(path);
-        if font_path.exists() {
-            if let Ok(font_file) = File::open(font_path) {
-                let reader = std::io::BufReader::new(font_file);
-                if let Ok(font) = doc.add_external_font(reader) {
-                    tracing::info!("📝 Loaded Arabic font: {}", path);
-                    return Some(font);
-                }
-            }
+    for path in &bundled_paths {
+        if let Some(font) = try_load_font(doc, path) {
+            tracing::info!("📝 Loaded bundled Arabic font: {}", path.display());
+            return Some(font);
+        }
+    }
+
+    // 2. Try Windows system fonts
+    let system_paths = [
+        Path::new(r"C:\Windows\Fonts\arial.ttf"),
+        Path::new(r"C:\Windows\Fonts\tahoma.ttf"),
+        Path::new(r"C:\Windows\Fonts\segoeui.ttf"),
+    ];
+
+    for path in &system_paths {
+        if let Some(font) = try_load_font(doc, path) {
+            tracing::info!("📝 Loaded system Arabic font: {}", path.display());
+            return Some(font);
         }
     }
 
     tracing::warn!("⚠️ No Arabic font found, falling back to Courier");
     None
+}
+
+fn try_load_font(doc: &PdfDocumentReference, path: &Path) -> Option<IndirectFontRef> {
+    if !path.exists() {
+        return None;
+    }
+    let file = File::open(path).ok()?;
+    let reader = std::io::BufReader::new(file);
+    doc.add_external_font(reader).ok()
 }
 
 /// Save a receipt buffer as a single-page PDF
@@ -148,7 +165,6 @@ pub fn save_receipt_pdf(
                 y_pos -= display_height_mm;
             }
             ReceiptLine::Separator => {
-                // Draw a dashed separator line as text
                 let dash_count = ((paper_width_mm - MARGIN_MM * 2.0) / (FONT_SIZE_PT * 0.6 / 2.8346)) as usize;
                 let sep_text = "-".repeat(dash_count);
                 current_layer.use_text(

@@ -37,9 +37,15 @@ jobs:
       - name: Build (Release)
         run: cargo build --release
 
+      - name: Prepare release bundle
+        run: |
+          New-Item -Path "release-bundle/assets/fonts" -ItemType Directory -Force
+          Copy-Item "target/release/escpos_emulator.exe" "release-bundle/"
+          Copy-Item "assets/fonts/*.ttf" "release-bundle/assets/fonts/"
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: escpos_emulator-windows-x86_64
-          path: target/release/escpos_emulator.exe
+          path: release-bundle/
           retention-days: 90
