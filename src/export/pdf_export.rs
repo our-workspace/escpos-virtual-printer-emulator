@@ -1,7 +1,7 @@
 use crate::escpos::printer::{PaperWidth, PrinterState, ReceiptLine};
 use anyhow::Result;
 use printpdf::{
-    BuiltinFont, Image, ImageTransform, Mm, PdfDocument,
+    BuiltinFont, Image, ImageTransform, IndirectFontRef, Mm, PdfDocument,
 };
 use std::fs::File;
 use std::io::BufWriter;
@@ -10,7 +10,40 @@ use std::path::Path;
 const TEXT_LINE_HEIGHT_MM: f64 = 3.5;
 const MARGIN_MM: f64 = 3.0;
 const FONT_SIZE_PT: f64 = 8.0;
+const FONT_SIZE_ARABIC_PT: f64 = 9.0;
 const MM_PER_DOT: f64 = 0.141; // 180 DPI ≈ 0.141mm per dot
+
+/// Check if text contains Arabic/non-ASCII characters
+fn has_non_ascii(text: &str) -> bool {
+    text.chars().any(|c| c > '\u{007F}')
+}
+
+/// Try to load a system font that supports Arabic
+fn load_arabic_font(doc: &PdfDocument) -> Option<IndirectFontRef> {
+    // Try common Windows fonts that support Arabic
+    let font_paths = [
+        r"C:\Windows\Fonts\arial.ttf",
+        r"C:\Windows\Fonts\tahoma.ttf",
+        r"C:\Windows\Fonts\segoeui.ttf",
+        r"C:\Windows\Fonts\calibri.ttf",
+    ];
+
+    for path in &font_paths {
+        let font_path = Path::new(path);
+        if font_path.exists() {
+            if let Ok(font_file) = File::open(font_path) {
+                let reader = std::io::BufReader::new(font_file);
+                if let Ok(font) = doc.add_external_font(reader) {
+                    tracing::info!("📝 Loaded Arabic font: {}", path);
+                    return Some(font);
+                }
+            }
+        }
+    }
+
+    tracing::warn!("⚠️ No Arabic font found, falling back to Courier");
+    None
+}
 
 /// Save a receipt buffer as a single-page PDF
 pub fn save_receipt_pdf(
@@ -37,8 +70,11 @@ pub fn save_receipt_pdf(
     );
 
     let current_layer = doc.get_page(page1).get_layer(layer1);
-    let font = doc.add_builtin_font(BuiltinFont::Courier)?;
-    let font_bold = doc.add_builtin_font(BuiltinFont::CourierBold)?;
+
+    // Load fonts
+    let font_courier = doc.add_builtin_font(BuiltinFont::Courier)?;
+    let font_courier_bold = doc.add_builtin_font(BuiltinFont::CourierBold)?;
+    let font_arabic = load_arabic_font(&doc);
 
     let mut y_pos = total_height_mm - MARGIN_MM;
 
@@ -46,26 +82,40 @@ pub fn save_receipt_pdf(
         match line {
             ReceiptLine::Text(text_line) => {
                 if !text_line.content.is_empty() {
-                    let used_font = if text_line.emphasis { &font_bold } else { &font };
+                    let is_arabic = has_non_ascii(&text_line.content);
+
+                    // Choose font: Arabic font for non-ASCII, Courier for ASCII
+                    let (used_font, font_size) = if is_arabic {
+                        if let Some(ref arabic_font) = font_arabic {
+                            (arabic_font, FONT_SIZE_ARABIC_PT)
+                        } else if text_line.emphasis {
+                            (&font_courier_bold, FONT_SIZE_PT)
+                        } else {
+                            (&font_courier, FONT_SIZE_PT)
+                        }
+                    } else if text_line.emphasis {
+                        (&font_courier_bold, FONT_SIZE_PT)
+                    } else {
+                        (&font_courier, FONT_SIZE_PT)
+                    };
 
                     // Calculate x position based on justification
+                    let char_width = font_size * 0.6 / 2.8346; // approximate char width in mm
                     let x_pos = match text_line.justification {
                         crate::escpos::commands::Justification::Left => MARGIN_MM,
                         crate::escpos::commands::Justification::Center => {
-                            let char_width = FONT_SIZE_PT * 0.6 / 2.8346; // approximate char width in mm
-                            let text_width = text_line.content.len() as f64 * char_width;
+                            let text_width = text_line.content.chars().count() as f64 * char_width;
                             ((paper_width_mm - text_width) / 2.0).max(MARGIN_MM)
                         }
                         crate::escpos::commands::Justification::Right => {
-                            let char_width = FONT_SIZE_PT * 0.6 / 2.8346;
-                            let text_width = text_line.content.len() as f64 * char_width;
+                            let text_width = text_line.content.chars().count() as f64 * char_width;
                             (paper_width_mm - MARGIN_MM - text_width).max(MARGIN_MM)
                         }
                     };
 
                     current_layer.use_text(
                         &text_line.content,
-                        FONT_SIZE_PT,
+                        font_size,
                         Mm(x_pos),
                         Mm(y_pos),
                         used_font,
@@ -76,7 +126,6 @@ pub fn save_receipt_pdf(
             ReceiptLine::Bitmap { width_px, height_px, data } => {
                 // Convert 1bpp bitmap to RGB for PDF embedding
                 let rgb_image = PrinterState::bitmap_to_rgb(*width_px, *height_px, data);
-                // Use the image crate directly (not shadowed by printpdf)
                 let dynamic_img: image::DynamicImage = rgb_image.into();
 
                 // Calculate display dimensions
@@ -107,7 +156,7 @@ pub fn save_receipt_pdf(
                     FONT_SIZE_PT,
                     Mm(MARGIN_MM),
                     Mm(y_pos),
-                    &font,
+                    &font_courier,
                 );
                 y_pos -= TEXT_LINE_HEIGHT_MM;
             }
